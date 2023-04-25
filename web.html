@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="initial-scale=1, maximum-scale=1, user-scalable=no"
+    />
+    <title>ArcGIS JavaScript API - Simple Map</title>
+    <link
+      rel="stylesheet"
+      href="https://js.arcgis.com/4.26/esri/themes/light/main.css"
+    />
+    <script src="https://js.arcgis.com/4.26/"></script>
+    <style>
+        html,
+        body {
+        padding: 0;
+        margin: 0;
+        height: 100%;
+        width: 100%;
+        }
+
+        #map {
+        display: flex;
+        height: calc(100vh - 80px);
+        }
+
+        #mapViewDiv {
+        width: 100%;
+        flex-grow:8;
+        }
+
+        #header {
+        height: 50px;
+        width: 100%;
+        background-color: #4b6043;
+        color: #ffff;
+        font-size: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        }
+
+        #basemap {
+        flex-grow: 8;
+        width:300px;
+        background-color: #eee;
+        overflow: scroll;
+        }
+
+        #optionsDiv {
+        background-color: white;
+        color: black;
+        padding: 6px;
+        max-width: 250px;
+      }
+
+      #topbar {
+        background: #fff;
+        padding: 10px;
+      }
+
+       .action-button {
+        font-size: 16px;
+        background-color: transparent;
+        border: 1px solid #d3d3d3;
+        color: #6e6e6e;
+        height: 32px;
+        width: 32px;
+        text-align: center;
+        box-shadow: 0 0 1px rgba(0, 0, 0, 0.3);
+      }
+
+      .action-button:hover,
+      .action-button:focus {
+        background: #0079c1;
+        color: #e4e4e4;
+      }
+
+      .active {
+        background: #0079c1;
+        color: #e4e4e4;
+      }
+    </style>
+
+    <script>
+      require([
+        "esri/Map",
+        "esri/Graphic",
+        "esri/views/MapView",
+        "esri/layers/FeatureLayer",
+        "esri/widgets/LayerList",
+        "esri/widgets/ScaleBar",
+        "esri/widgets/Search",
+        "esri/widgets/Legend",
+        "esri/portal/Portal",
+        "esri/widgets/BasemapGallery",
+        "esri/widgets/BasemapGallery/support/PortalBasemapsSource",
+        "esri/widgets/Expand",
+        "esri/widgets/DistanceMeasurement2D",
+        "esri/widgets/AreaMeasurement2D"
+      ], function (
+        Map,
+        Graphic,
+        MapView,
+        FeatureLayer,
+        LayerList,
+        ScaleBar,
+        Search,
+        Legend,
+        Portal,
+        BasemapGallery,
+        PortalBasemapsSource,
+        Expand,
+        DistanceMeasurement2D,
+        AreaMeasurement2D
+      ) {
+        let activeWidget = null;
+        const layer = new FeatureLayer({
+          // autocasts as new PortalItem()
+          url: "https://www.geosceneonline.cn/server/rest/services/Hosted/中国的山脉降水量划分/FeatureServer/0"
+        });
+
+        //山脉线
+        const layer1 = new FeatureLayer({
+          // autocasts as new PortalItem()
+          url: "https://www.geosceneonline.cn/server/rest/services/Hosted/中国的山脉划分/FeatureServer/0"
+        });
+
+        const map = new Map({
+          basemap: "gray-vector"
+        });
+        map.layers.add(layer);
+        map.layers.add(layer1);
+
+        var view = new MapView({
+          container: "mapViewDiv",
+          map: map,
+          popup: {
+            autoOpenEnabled: false,
+            dockEnabled: true,
+            dockOptions: {
+              // dock popup at bottom-right side of view
+              buttonEnabled: false,
+              breakpoint: false,
+              position: "bottom-right"
+            }
+          }
+        });
+
+        //底图库
+        let basemapGallery = new BasemapGallery({
+          view: view,
+          container: basemap
+        });
+
+        view.ui.add(basemapGallery, {
+          position: "central"
+        });
+
+        //比例尺
+        let scaleBar = new ScaleBar({
+          view: view
+        });
+        view.ui.add(scaleBar, {
+          position: "bottom-left"
+        });
+
+        //搜索框
+        const searchWidget = new Search({
+          view: view
+        });
+        view.ui.add(
+          new Expand({
+            view: view,
+            content: searchWidget,
+            expanded: false
+          }),
+          "top-left"
+        );
+
+        //图层列表
+        let layerList = new LayerList({
+          view: view
+        });
+
+        view.ui.add(
+          new Expand({
+            view: view,
+            content: layerList,
+            expanded: false
+          }),
+          "top-left"
+        );
+
+        //图例
+        const legend = new Legend({
+          view: view
+        });
+        view.ui.add(
+          new Expand({
+            view: view,
+            content: legend,
+            expanded: false
+          }),
+          "top-left"
+        );
+
+        view.ui.add("optionsDiv", "top-right");
+
+        // additional query fields initially set to null for basic query
+        let distance = null;
+        let units = null;
+
+        //create graphic for mouse point click
+        const pointGraphic = new Graphic({
+          symbol: {
+            type: "simple-marker", // autocasts as new SimpleMarkerSymbol()
+            color: [0, 0, 139],
+            outline: {
+              color: [255, 255, 255],
+              width: 1.5
+            }
+          }
+        });
+
+        // Create graphic for distance buffer
+        const bufferGraphic = new Graphic({
+          symbol: {
+            type: "simple-fill", // autocasts as new SimpleFillSymbol()
+            color: [173, 216, 230, 0.2],
+            outline: {
+              // autocasts as new SimpleLineSymbol()
+              color: [255, 255, 255],
+              width: 1
+            }
+          }
+        });
+
+        // when query type changes, set appropriate values
+        const queryOpts = document.getElementById("query-type");
+
+        queryOpts.addEventListener("change", () => {
+          switch (queryOpts.value) {
+            // values set for distance query
+            case "distance":
+              distance = 7;
+              units = "miles";
+              break;
+            default:
+              // Default set to basic query
+              distance = null;
+              units = null;
+          }
+        });
+        layer.load().then(() => {
+          // Set the view extent to the data extent
+          view.extent = layer.fullExtent;
+          layer.popupTemplate = layer.createPopupTemplate();
+        });
+
+        view.on("click", (event) => {
+          view.graphics.remove(pointGraphic);
+          if (view.graphics.includes(bufferGraphic)) {
+            view.graphics.remove(bufferGraphic);
+          }
+          queryFeatures(event);
+        });
+        function queryFeatures(screenPoint) {
+          const point = view.toMap(screenPoint);
+          layer
+            .queryFeatures({
+              geometry: point,
+              // distance and units will be null if basic query selected
+              distance: distance,
+              units: units,
+              spatialRelationship: "intersects",
+              returnGeometry: false,
+              returnQueryGeometry: true,
+              outFields: ["*"]
+            })
+            .then((featureSet) => {
+              // set graphic location to mouse pointer and add to mapview
+              pointGraphic.geometry = point;
+              view.graphics.add(pointGraphic);
+              // open popup of query result
+              view.popup.open({
+                location: point,
+                features: featureSet.features,
+                featureMenuOpen: true
+              });
+              if (featureSet.queryGeometry) {
+                bufferGraphic.geometry = featureSet.queryGeometry;
+                view.graphics.add(bufferGraphic);
+              }
+            });
+        }
+
+        // add the toolbar for the measurement widgets
+        view.ui.add("topbar", "top-right");
+
+        document
+          .getElementById("distanceButton")
+          .addEventListener("click", function () {
+            setActiveWidget(null);
+            if (!this.classList.contains("active")) {
+              setActiveWidget("distance");
+            } else {
+              setActiveButton(null);
+            }
+          });
+
+        document
+          .getElementById("areaButton")
+          .addEventListener("click", function () {
+            setActiveWidget(null);
+            if (!this.classList.contains("active")) {
+              setActiveWidget("area");
+            } else {
+              setActiveButton(null);
+            }
+          });
+
+        function setActiveWidget(type) {
+          switch (type) {
+            case "distance":
+              activeWidget = new DistanceMeasurement2D({
+                view: view
+              });
+
+              // skip the initial 'new measurement' button
+              activeWidget.viewModel.start();
+
+              view.ui.add(activeWidget, "top-right");
+              setActiveButton(document.getElementById("distanceButton"));
+              break;
+            case "area":
+              activeWidget = new AreaMeasurement2D({
+                view: view
+              });
+
+              // skip the initial 'new measurement' button
+              activeWidget.viewModel.start();
+
+              view.ui.add(activeWidget, "top-right");
+              setActiveButton(document.getElementById("areaButton"));
+              break;
+            case null:
+              if (activeWidget) {
+                view.ui.remove(activeWidget);
+                activeWidget.destroy();
+                activeWidget = null;
+              }
+              break;
+          }
+        }
+
+        function setActiveButton(selectedButton) {
+          // focus the view to activate keyboard shortcuts for sketching
+          view.focus();
+          let elements = document.getElementsByClassName("active");
+          for (let i = 0; i < elements.length; i++) {
+            elements[i].classList.remove("active");
+          }
+          if (selectedButton) {
+            selectedButton.classList.add("active");
+          }
+        }
+      });
+    </script>
+  </head>
+  <body>
+    <div id="header">2000-2020年中国山脉降水统计</div>
+    <div id="map">
+      <div id="mapViewDiv"></div>
+      <div id="basemap"></div>
+    </div>
+
+    <div id="optionsDiv" class="esri-widget">
+      <p>
+        Select a query type and click a point on the map to view the results.
+      </p>
+      <select id="query-type" class="esri-widget">
+        <option value="basic">Basic Query</option>
+        <option value="distance">Query By Distance</option>
+      </select>
+      <div id="srDiv" class="esri-widget"></div>
+    </div>
+
+    <div id="topbar">
+      <button
+        class="action-button esri-icon-measure-line"
+        id="distanceButton"
+        type="button"
+        title="Measure distance between two or more points"
+      ></button>
+      <button
+        class="action-button esri-icon-measure-area"
+        id="areaButton"
+        type="button"
+        title="Measure area"
+      ></button>
+    </div>
+  </body>
+</html>
